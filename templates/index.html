@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Soccer & Cricket Viewer</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;padding:20px;color:#333}
+    .container{max-width:1000px;margin:0 auto}
+    .header{text-align:center;color:white;margin-bottom:30px;padding:20px}
+    .header h1{font-size:2.2rem;font-weight:700;margin-bottom:8px;text-shadow:2px 2px 4px rgba(0,0,0,.2)}
+    .card{background:white;border-radius:16px;padding:20px;margin-bottom:18px;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+    .control-panel{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end}
+    select,input{padding:10px 12px;border-radius:8px;border:2px solid #e0e0e0;font-size:1rem}
+    .btn{padding:10px 18px;border-radius:8px;border:none;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-weight:700;cursor:pointer}
+    .match-card{background:linear-gradient(135deg,#f5f7fa,#c3cfe2);border-radius:12px;padding:18px;margin-bottom:14px}
+    .match-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .team-container{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .team-card{background:#fff;padding:14px;border-radius:10px;text-align:center;box-shadow:0 4px 10px rgba(0,0,0,.08)}
+    .team-name{font-weight:700;margin-bottom:8px}
+    .team-score{font-size:1.6rem;color:#2b6cb0;font-weight:800}
+    .info-row{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}
+    .info-item{background:#fff;padding:10px 12px;border-radius:8px;min-width:140px;text-align:center;box-shadow:0 3px 8px rgba(0,0,0,.06)}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚽ Soccer & 🏏 Cricket Live Viewer</h1>
+      <div style="color:rgba(255,255,255,0.9)">Choose sport — subscribe — watch live updates</div>
+    </div>
+
+    <div class="card control-panel">
+      <div style="display:flex;gap:12px;align-items:flex-end">
+        <div>
+          <label style="display:block;font-weight:700;margin-bottom:6px;color:#555">Sport</label>
+          <select id="sportSel">
+            <option value="soccer" selected>Soccer</option>
+            <option value="cricket">Cricket</option>
+          </select>
+        </div>
+
+        <div id="leagueGroup">
+          <label style="display:block;font-weight:700;margin-bottom:6px;color:#555">League</label>
+          <select id="leagueSel">
+            <option>EPL</option><option>La Liga</option><option>Serie A</option><option>Bundesliga</option><option>Ligue 1</option><option>UCL</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px">
+        <button id="subscribeBtn" class="btn">Subscribe</button>
+        <button id="unsubscribeBtn" class="btn" style="background:#e2e8f0;color:#111">Unsubscribe</button>
+      </div>
+    </div>
+
+    <div id="status" class="card"><span id="statusText">Not connected</span></div>
+
+    <div id="matchList"></div>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+  const socket = io();
+  const sportSel = document.getElementById('sportSel');
+  const leagueGroup = document.getElementById('leagueGroup');
+  const leagueSel = document.getElementById('leagueSel');
+  const subscribeBtn = document.getElementById('subscribeBtn');
+  const unsubscribeBtn = document.getElementById('unsubscribeBtn');
+  const statusText = document.getElementById('statusText');
+  const matchList = document.getElementById('matchList');
+
+  let current = { sport:null, league:null };
+
+  socket.on('connect', ()=> statusText.textContent = `Connected (${socket.id})`);
+  socket.on('disconnect', ()=> statusText.textContent = 'Disconnected');
+
+  sportSel.onchange = () => {
+    leagueGroup.style.display = sportSel.value === 'soccer' ? 'block' : 'none';
+  };
+  sportSel.onchange();
+
+  subscribeBtn.onclick = () => {
+    const sport = sportSel.value;
+    if (sport === 'soccer') {
+      const league = leagueSel.value;
+      current = { sport:'soccer', league };
+      statusText.textContent = `Subscribing to ${league}...`;
+      matchList.dataset.mode = 'soccer';
+      matchList.innerHTML = `<div class="card">Loading ${league} matches...</div>`;
+      socket.emit('league:subscribe', { league });
+    } else {
+      current = { sport:'cricket', league:null };
+      statusText.textContent = `Subscribing to Cricket...`;
+      matchList.dataset.mode = 'cricket';
+      matchList.innerHTML = `<div class="card">Loading cricket matches...</div>`;
+      socket.emit('cricket:subscribe', {});
+    }
+  };
+
+  unsubscribeBtn.onclick = () => {
+    if (current.sport === 'soccer' && current.league) {
+      socket.emit('league:unsubscribe', { league: current.league });
+      statusText.textContent = `Unsubscribed ${current.league}`;
+    } else if (current.sport === 'cricket') {
+      socket.emit('cricket:unsubscribe', {});
+      statusText.textContent = `Unsubscribed Cricket`;
+    }
+    current = { sport:null, league:null };
+    matchList.dataset.mode = '';
+    matchList.innerHTML = '';
+  };
+
+  // Soccer handler: only render when UI mode is soccer
+  socket.on('league:update', data => {
+    if (matchList.dataset.mode !== 'soccer') return;
+    const matches = data.matches || [];
+    const league = data.id || leagueSel.value;
+    statusText.textContent = `Showing ${league} — ${matches.length} matches`;
+    if (!matches.length) {
+      matchList.innerHTML = `<div class="card">No active matches</div>`;
+      return;
+    }
+    matchList.innerHTML = matches.map(m => `
+      <div class="match-card">
+        <div class="match-header"><div>${m.home_team} vs ${m.away_team}</div><div>${m.status}</div></div>
+        <div class="team-container">
+          <div class="team-card"><div class="team-name">${m.home_team}</div><div class="team-score">${m.home_score}</div></div>
+          <div class="team-card"><div class="team-name">${m.away_team}</div><div class="team-score">${m.away_score}</div></div>
+        </div>
+      </div>
+    `).join('');
+  });
+
+  // Cricket handler: only render when UI mode is cricket
+  socket.on('cricket:update', data => {
+    if (matchList.dataset.mode !== 'cricket') return;
+    const matches = data.matches || [];
+    const cards = data.cards || [];
+    statusText.textContent = `Showing Cricket — ${matches.length} matches`;
+
+    if (!matches.length && !cards.length) {
+      matchList.innerHTML = `<div class="card">No active cricket matches</div>`;
+      return;
+    }
+
+    if (cards.length) {
+      matchList.innerHTML = cards.map(c => {
+        const home = c.teams[0] || {team:'Home',runs:0,wickets:0,overs:''};
+        const away = c.teams[1] || {team:'Away',runs:0,wickets:0,overs:''};
+        return `
+          <div class="match-card">
+            <div class="match-header">
+              <div style="font-weight:700">${c.name}</div>
+              <div>${c.status}</div>
+            </div>
+
+            <div class="team-container">
+              <div class="team-card">
+                ${home.img ? `<img src="${home.img}" alt="" style="height:36px;margin-bottom:8px">` : ''}
+                <div class="team-name">${home.team}</div>
+                <div class="team-score">${home.runs}/${home.wickets} (${home.overs})</div>
+              </div>
+
+              <div class="team-card">
+                ${away.img ? `<img src="${away.img}" alt="" style="height:36px;margin-bottom:8px">` : ''}
+                <div class="team-name">${away.team}</div>
+                <div class="team-score">${away.runs}/${away.wickets} (${away.overs})</div>
+              </div>
+            </div>
+
+            <div class="info-row">
+              <div class="info-item"><div style="font-size:0.8rem;color:#666">Match Type</div><div style="font-weight:700">${c.matchType || '—'}</div></div>
+              <div class="info-item"><div style="font-size:0.8rem;color:#666">Venue</div><div style="font-weight:700">${c.venue || '—'}</div></div>
+              <div class="info-item"><div style="font-size:0.8rem;color:#666">Status</div><div style="font-weight:700">${c.status || '—'}</div></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } else {
+      matchList.innerHTML = matches.map(m => `
+        <div class="match-card">
+          <div class="match-header"><div>${m.home_team} vs ${m.away_team}</div><div>${m.status}</div></div>
+          <div class="team-container">
+            <div class="team-card"><div class="team-name">${m.home_team}</div><div class="team-score">${m.home_score}</div></div>
+            <div class="team-card"><div class="team-name">${m.away_team}</div><div class="team-score">${m.away_score}</div></div>
+          </div>
+          <div class="info-row">
+            <div class="info-item"><div style="font-size:0.8rem;color:#666">Time</div><div style="font-weight:700">${m.time||'—'}</div></div>
+            <div class="info-item"><div style="font-size:0.8rem;color:#666">Status</div><div style="font-weight:700">${m.status||'—'}</div></div>
+          </div>
+        </div>
+      `).join('');
+    }
+  });
+</script>
+</body>
+</html>
